@@ -3,16 +3,26 @@ from google.cloud import bigquery
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
+import json
 import os
+from google.oauth2 import service_account
 
-# Set page config
+# Set page configmy
 st.set_page_config(page_title="Google Top Search Terms", layout="wide")
 
-# Set Google Cloud credentials
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "googlecloud.json"  
+
+# Load credentials from Streamlit secrets
+creds_dict = st.secrets["google_service_account"]
+
+# Convert TOML to JSON string for compatibility
+creds_json = json.loads(json.dumps(dict(creds_dict)))
+
+# Authenticate using service account
+credentials = service_account.Credentials.from_service_account_info(creds_json)
 
 # Initialize BigQuery client
-client = bigquery.Client(project="chatbot-446403")
+client = bigquery.Client(credentials=credentials, project=creds_json["project_id"])
+
 
 # Default date range
 end_date = datetime.now().date()
