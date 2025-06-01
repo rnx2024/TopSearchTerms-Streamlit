@@ -10,19 +10,12 @@ from google.oauth2 import service_account
 # Set page configmy
 st.set_page_config(page_title="Google Top Search Terms", layout="wide")
 
+# Load credentials from Streamlit secrets directly
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["google_service_account"]
+)
 
-# Load credentials from Streamlit secrets
-creds_dict = st.secrets["google_service_account"]
-
-# Convert TOML to JSON string for compatibility
-creds_json = json.loads(json.dumps(dict(creds_dict)))
-
-# Authenticate using service account
-credentials = service_account.Credentials.from_service_account_info(creds_json)
-
-# Initialize BigQuery client
-client = bigquery.Client(credentials=credentials, project=creds_json["project_id"])
-
+client = bigquery.Client(credentials=credentials, project=credentials.project_id)
 
 # Default date range
 end_date = datetime.now().date()
