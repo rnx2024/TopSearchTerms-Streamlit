@@ -1,9 +1,7 @@
-# TopSearchTerms-Streamlit App
-This is a Streamlit app that lets users view the top search terms per country. App provides visuals and raw table data. Raw data and visuals can be downloaded per country.
-
 # 🔍 Google Top Search Terms Dashboard
 
-This Streamlit web app visualizes the top 5 Google search terms by country using real-time data from BigQuery's public Google Trends dataset.
+This Streamlit web app visualizes the top 5 Google search terms by country using real-time data from BigQuery's public Google Trends dataset. App provides visuals and raw table data. Raw data and visuals can be downloaded per country.
+
 
 > 🚀 Built with [Streamlit](https://streamlit.io/) + [Google BigQuery](https://cloud.google.com/bigquery)
 
