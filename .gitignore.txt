@@ -1,0 +1,10 @@
+# Virtual envs
+venv/
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/
+
+# Secrets
+googlecloud.json
