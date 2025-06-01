@@ -1,5 +1,5 @@
-# TopSearchTerms-Streamlit-App
-This is a Streamlit app that lets users view the top search terms per country in the last 30 days. App provides visuals and in raw table data. Raw data and visuals can be downloaded per country.
+# TopSearchTerms-Streamlit App
+This is a Streamlit app that lets users view the top search terms per country. App provides visuals and raw table data. Raw data and visuals can be downloaded per country.
 
 # 🔍 Google Top Search Terms Dashboard
 
@@ -12,8 +12,9 @@ This Streamlit web app visualizes the top 5 Google search terms by country using
 ### 🔗 Main Dashboard
 ![Main Dashboard](screenshots/main-dashboard.png)
 
-### 📊 Country Filters
-![Filters](screenshots/filters.png)
+### 📊 Raw Data & Downloads
+![Raw-Data-Download](screenshots/raw-data-table.png)
+![Raw-Data-Download](screenshots/download-raw-data.png)
 
 ---
 
@@ -32,5 +33,5 @@ This Streamlit web app visualizes the top 5 Google search terms by country using
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/top-search-terms-streamlit.git
-cd top-search-terms-streamlit
+git clone https://github.com/rnx2024/TopSearchTerms-Streamlit.git
+cd TopSearchTerms-Streamlit
