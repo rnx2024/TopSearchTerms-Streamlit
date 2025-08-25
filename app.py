@@ -1,117 +1,128 @@
 import streamlit as st
 from google.cloud import bigquery
+from google.oauth2 import service_account
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timedelta
-import json
-import os
-from google.oauth2 import service_account
+from datetime import datetime, date
 
-# Set page configmy
+# ---------------- Page ----------------
 st.set_page_config(page_title="Google Top Search Terms", layout="wide")
 
-# Load credentials from Streamlit secrets directly
+# ---------------- Auth / Client ----------------
 credentials = service_account.Credentials.from_service_account_info(
     st.secrets["google_service_account"]
 )
-
 client = bigquery.Client(credentials=credentials, project=credentials.project_id)
 
-# Default date range
-end_date = datetime.now().date()
-start_date = datetime(2025, 1, 1).date()
+# ---------------- SQL (weekly, parametrized) ----------------
+TOP_TERMS_SQL = """
+WITH weekly_terms AS (
+  SELECT
+    term,
+    DATE(week) AS week_date,
+    score,
+    rank,
+    ROW_NUMBER() OVER (
+      PARTITION BY country_name, DATE(week)
+      ORDER BY score DESC
+    ) AS rnk
+  FROM `bigquery-public-data.google_trends.international_top_terms`
+  WHERE DATE(week) BETWEEN @start_date AND @end_date
+    AND country_name = @country
+)
+SELECT term, week_date AS date, score, rank
+FROM weekly_terms
+WHERE rnk <= 5
+ORDER BY date, rank
+"""
 
+# ---------------- Data helpers ----------------
+@st.cache_data(ttl=3600)
+def get_countries() -> list[str]:
+    q = """
+      SELECT DISTINCT country_name
+      FROM `bigquery-public-data.google_trends.international_top_terms`
+      WHERE country_name IS NOT NULL
+      ORDER BY country_name
+    """
+    job_cfg = bigquery.QueryJobConfig(use_query_cache=True, location="US")
+    df = client.query(q, job_config=job_cfg).to_dataframe()
+    return df["country_name"].dropna().tolist()
 
-# Build query
-def get_query(country_name, start_date, end_date):
-    
-    return f"""
-    WITH daily_terms AS (
-        SELECT 
-            term, 
-            DATE(week) AS date, 
-            score, 
-            rank,
-            ROW_NUMBER() OVER (PARTITION BY DATE(week), country_name ORDER BY score DESC) AS daily_rank
-        FROM `bigquery-public-data.google_trends.international_top_terms`
-        WHERE DATE(week) BETWEEN '{start_date}' AND '{end_date}'
-        AND country_name = '{country_name}'
-        
+@st.cache_data(ttl=600)
+def execute_query(country_name: str, start: date, end: date) -> pd.DataFrame:
+    job_cfg = bigquery.QueryJobConfig(
+        use_query_cache=True,
+        maximum_bytes_billed=1_000_000_000,  # 1 GB guard
+        location="US",
+        query_parameters=[
+            bigquery.ScalarQueryParameter("start_date", "DATE", start.isoformat()),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end.isoformat()),
+            bigquery.ScalarQueryParameter("country", "STRING", country_name),
+        ],
     )
-    SELECT term, date, score, rank
-    FROM daily_terms
-    WHERE daily_rank <= 5
-    ORDER BY date, rank
-    """
+    return client.query(TOP_TERMS_SQL, job_config=job_cfg).to_dataframe()
 
-# Get valid countries
-@st.cache_data
-def get_countries():
-    query = """
-    SELECT DISTINCT country_name
-    FROM `bigquery-public-data.google_trends.international_top_terms`
-    ORDER BY country_name
-    """
-    query_job = client.query(query)
-    df = query_job.to_dataframe()
-    return df['country_name'].dropna().unique().tolist()
+def pick_default_country(countries: list[str]) -> str:
+    for pref in ("United States", "Philippines"):
+        if pref in countries:
+            return pref
+    return countries[0]
 
-# Default fallback
-def get_default_country(available_countries, preferred="United States"):
-    return preferred if preferred in available_countries else available_countries[0]
-
-# Run query
-def execute_query(country_name, start_date, end_date):
-    query = get_query(country_name, start_date, end_date)
-    job_config = bigquery.QueryJobConfig(use_query_cache=False)
-    query_job = client.query(query, job_config=job_config)
-    return query_job.to_dataframe()
-
-# UI starts
+# ---------------- UI ----------------
 st.title("🔍 Google Top Search Terms")
 
-
-
-# Sidebar filters
 with st.sidebar:
     st.header("Filters")
     countries = get_countries()
-    default_country = get_default_country(countries)
+    if not countries:
+        st.warning("No countries available from dataset.")
+        st.stop()
+
+    default_country = pick_default_country(countries)
     selected_country = st.selectbox("Country", countries, index=countries.index(default_country))
-    
-   
-    # Fixed start and end range for calendar
-    calendar_min_date = datetime(2025, 1, 1).date()
+
+    calendar_min_date = date(2025, 1, 1)
     calendar_max_date = datetime.now().date()
 
-# Date input with constraints
-    date_range = st.date_input(
-    "Date Range",
-    value=(calendar_min_date, calendar_max_date),
-    min_value=calendar_min_date,
-    max_value=calendar_max_date
+    raw_range = st.date_input(
+        "Date Range",
+        value=(calendar_min_date, calendar_max_date),
+        min_value=calendar_min_date,
+        max_value=calendar_max_date,
+    )
 
-   
-) 
-with st.sidebar:
-    
     st.markdown("📌 **Created by Rhanny Urbis**")
 
-st.markdown(f"Showing top 5 search terms from **{date_range[0]}** to **{date_range[1]}**")
+# Normalize date range (support single date selection)
+if isinstance(raw_range, tuple) and len(raw_range) == 2:
+    start_date, end_date = raw_range
+else:
+    start_date = end_date = raw_range
 
-# Query results
-df = execute_query(selected_country, date_range[0], date_range[1])
+# Ensure start <= end
+if start_date > end_date:
+    start_date, end_date = end_date, start_date
 
-# Output
+st.markdown(f"Showing top 5 weekly search terms from **{start_date}** to **{end_date}**")
+
+# ---------------- Query + Output ----------------
+df = execute_query(selected_country, start_date, end_date)
+
 if not df.empty:
-    st.subheader(f"📊 Top 5 Search Terms in {selected_country}")
-    
-    # Bar chart only
-    fig_bar = px.bar(df, x='date', y='score', color='term', title='Top Search Terms by Day')
+    st.subheader(f"📊 Top 5 Weekly Search Terms in {selected_country}")
+    fig_bar = px.bar(
+        df,
+        x="date",
+        y="score",
+        color="term",
+        title=f"Top 5 Weekly Search Terms — {selected_country}",
+        barmode="group",
+    )
+    fig_bar.update_layout(xaxis_title="Week", yaxis_title="Score", legend_title_text="Term")
     st.plotly_chart(fig_bar, use_container_width=True)
 
-    # Raw data
     with st.expander("📋 See raw data"):
-        st.dataframe(df)
+        st.dataframe(df, use_container_width=True)
 else:
     st.warning("No data found for the selected filters.")
