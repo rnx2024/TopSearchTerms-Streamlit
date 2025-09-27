@@ -4,11 +4,13 @@ from google.oauth2 import service_account
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, date
+from typing import List
 
 # ---------------- Page ----------------
 st.set_page_config(page_title="Google Top Search Terms", layout="wide")
 
 # ---------------- Auth / Client ----------------
+# Expect st.secrets["google_service_account"] to contain a full SA JSON mapping
 credentials = service_account.Credentials.from_service_account_info(
     st.secrets["google_service_account"]
 )
@@ -38,7 +40,7 @@ ORDER BY date, rank
 
 # ---------------- Data helpers ----------------
 @st.cache_data(ttl=3600)
-def get_countries() -> list[str]:
+def get_countries() -> List[str]:
     q = """
       SELECT DISTINCT country_name
       FROM `bigquery-public-data.google_trends.international_top_terms`
@@ -47,7 +49,8 @@ def get_countries() -> list[str]:
     """
     job_cfg = bigquery.QueryJobConfig(use_query_cache=True, location="US")
     df = client.query(q, job_config=job_cfg).to_dataframe()
-    return df["country_name"].dropna().tolist()
+    countries = df["country_name"].dropna().tolist()
+    return countries
 
 @st.cache_data(ttl=600)
 def execute_query(country_name: str, start: date, end: date) -> pd.DataFrame:
@@ -56,34 +59,39 @@ def execute_query(country_name: str, start: date, end: date) -> pd.DataFrame:
         maximum_bytes_billed=1_000_000_000,  # 1 GB guard
         location="US",
         query_parameters=[
-            bigquery.ScalarQueryParameter("start_date", "DATE", start.isoformat()),
-            bigquery.ScalarQueryParameter("end_date", "DATE", end.isoformat()),
+            bigquery.ScalarQueryParameter("start_date", "DATE", start),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end),
             bigquery.ScalarQueryParameter("country", "STRING", country_name),
         ],
     )
     return client.query(TOP_TERMS_SQL, job_config=job_cfg).to_dataframe()
 
-def pick_default_country(countries: list[str]) -> str:
-    for pref in ("United States", "Philippines"):
+def pick_default_country(countries: List[str]) -> str:
+    for pref in ("Philippines", "United States"):
         if pref in countries:
             return pref
     return countries[0]
 
 # ---------------- UI ----------------
-st.title("🔍 Google Top Search Terms")
+st.title("Google Top Search Terms")
 
 with st.sidebar:
     st.header("Filters")
     countries = get_countries()
     if not countries:
-        st.warning("No countries available from dataset.")
+        st.warning("No countries available from the dataset.")
         st.stop()
 
     default_country = pick_default_country(countries)
-    selected_country = st.selectbox("Country", countries, index=countries.index(default_country))
+    try:
+        default_idx = countries.index(default_country)
+    except ValueError:
+        default_idx = 0
 
-    calendar_min_date = date(2025, 1, 1)
-    calendar_max_date = datetime.now().date()
+    selected_country = st.selectbox("Country", countries, index=default_idx)
+
+    calendar_min_date = date(2025, 1, 1)   # adjust if you want earlier data
+    calendar_max_date = min(datetime.now().date(), date.today())
 
     raw_range = st.date_input(
         "Date Range",
@@ -92,7 +100,7 @@ with st.sidebar:
         max_value=calendar_max_date,
     )
 
-    st.markdown("📌 **Created by Rhanny Urbis**")
+    st.caption("Created by Rhanny Urbis")
 
 # Normalize date range (support single date selection)
 if isinstance(raw_range, tuple) and len(raw_range) == 2:
@@ -110,7 +118,7 @@ st.markdown(f"Showing top 5 weekly search terms from **{start_date}** to **{end_
 df = execute_query(selected_country, start_date, end_date)
 
 if not df.empty:
-    st.subheader(f"📊 Top 5 Weekly Search Terms in {selected_country}")
+    st.subheader(f"Top 5 Weekly Search Terms in {selected_country}")
     fig_bar = px.bar(
         df,
         x="date",
@@ -122,7 +130,7 @@ if not df.empty:
     fig_bar.update_layout(xaxis_title="Week", yaxis_title="Score", legend_title_text="Term")
     st.plotly_chart(fig_bar, use_container_width=True)
 
-    with st.expander("📋 See raw data"):
+    with st.expander("See raw data"):
         st.dataframe(df, use_container_width=True)
 else:
     st.warning("No data found for the selected filters.")
