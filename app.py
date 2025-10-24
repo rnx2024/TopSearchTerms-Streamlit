@@ -14,7 +14,13 @@ st.set_page_config(page_title="Google Top Search Terms", layout="wide")
 credentials = service_account.Credentials.from_service_account_info(
     st.secrets["google_service_account"]
 )
-client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+
+# location MUST be set on the client (or passed to client.query), not in QueryJobConfig
+client = bigquery.Client(
+    credentials=credentials,
+    project=credentials.project_id,
+    location="US",  # <-- moved here
+)
 
 # ---------------- SQL (weekly, parametrized) ----------------
 TOP_TERMS_SQL = """
@@ -47,30 +53,40 @@ def get_countries() -> List[str]:
       WHERE country_name IS NOT NULL
       ORDER BY country_name
     """
-    job_cfg = bigquery.QueryJobConfig(use_query_cache=True, location="US")
+
+    # removed location="US" here
+    job_cfg = bigquery.QueryJobConfig(
+        use_query_cache=True,
+        maximum_bytes_billed=1_000_000_000,  # 1 GB safety cap
+    )
+
     df = client.query(q, job_config=job_cfg).to_dataframe()
     countries = df["country_name"].dropna().tolist()
     return countries
 
+
 @st.cache_data(ttl=600)
 def execute_query(country_name: str, start: date, end: date) -> pd.DataFrame:
+    # removed location="US" here too
     job_cfg = bigquery.QueryJobConfig(
         use_query_cache=True,
         maximum_bytes_billed=1_000_000_000,  # 1 GB guard
-        location="US",
         query_parameters=[
             bigquery.ScalarQueryParameter("start_date", "DATE", start),
             bigquery.ScalarQueryParameter("end_date", "DATE", end),
             bigquery.ScalarQueryParameter("country", "STRING", country_name),
         ],
     )
+
     return client.query(TOP_TERMS_SQL, job_config=job_cfg).to_dataframe()
+
 
 def pick_default_country(countries: List[str]) -> str:
     for pref in ("Philippines", "United States"):
         if pref in countries:
             return pref
     return countries[0]
+
 
 # ---------------- UI ----------------
 st.title("Google Top Search Terms")
@@ -127,7 +143,11 @@ if not df.empty:
         title=f"Top 5 Weekly Search Terms — {selected_country}",
         barmode="group",
     )
-    fig_bar.update_layout(xaxis_title="Week", yaxis_title="Score", legend_title_text="Term")
+    fig_bar.update_layout(
+        xaxis_title="Week",
+        yaxis_title="Score",
+        legend_title_text="Term",
+    )
     st.plotly_chart(fig_bar, use_container_width=True)
 
     with st.expander("See raw data"):
