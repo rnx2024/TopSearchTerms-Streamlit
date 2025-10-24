@@ -1,6 +1,7 @@
 import streamlit as st
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from google.api_core import exceptions as gexc
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, date
@@ -14,14 +15,12 @@ st.set_page_config(page_title="Google Top Search Terms", layout="wide")
 credentials = service_account.Credentials.from_service_account_info(
     st.secrets["google_service_account"]
 )
-client = bigquery.Client(credentials=credentials, project=credentials.project_id)
 
-
-# location MUST be set on the client (or passed to client.query), not in QueryJobConfig
+# BigQuery client. location belongs here.
 client = bigquery.Client(
     credentials=credentials,
     project=credentials.project_id,
-    location="US",  # <-- moved here
+    location="US",
 )
 
 # ---------------- SQL (weekly, parametrized) ----------------
@@ -49,6 +48,10 @@ ORDER BY date, rank
 # ---------------- Data helpers ----------------
 @st.cache_data(ttl=3600)
 def get_countries() -> List[str]:
+    """
+    Query distinct country_name values.
+    On quota/credit exhaustion, show a user-facing message and stop.
+    """
     q = """
       SELECT DISTINCT country_name
       FROM `bigquery-public-data.google_trends.international_top_terms`
@@ -56,20 +59,31 @@ def get_countries() -> List[str]:
       ORDER BY country_name
     """
 
-    # removed location="US" here
     job_cfg = bigquery.QueryJobConfig(
         use_query_cache=True,
         maximum_bytes_billed=1_000_000_000,  # 1 GB safety cap
     )
 
-    df = client.query(q, job_config=job_cfg).to_dataframe()
+    try:
+        df = client.query(q, job_config=job_cfg).to_dataframe()
+    except (gexc.Forbidden, gexc.BadRequest, gexc.TooManyRequests):
+        # Covers: billing disabled, quota exceeded, free tier exhausted
+        st.error("BigQuery quota or credits exceeded. Please try again later.")
+        st.stop()
+    except Exception as e:
+        st.error(f"Unexpected error while loading countries: {e}")
+        st.stop()
+
     countries = df["country_name"].dropna().tolist()
     return countries
 
 
 @st.cache_data(ttl=600)
 def execute_query(country_name: str, start: date, end: date) -> pd.DataFrame:
-    # removed location="US" here too
+    """
+    Query top 5 weekly search terms for a given country and date range.
+    On quota/credit exhaustion, show a user-facing message and stop.
+    """
     job_cfg = bigquery.QueryJobConfig(
         use_query_cache=True,
         maximum_bytes_billed=1_000_000_000,  # 1 GB guard
@@ -80,7 +94,16 @@ def execute_query(country_name: str, start: date, end: date) -> pd.DataFrame:
         ],
     )
 
-    return client.query(TOP_TERMS_SQL, job_config=job_cfg).to_dataframe()
+    try:
+        df = client.query(TOP_TERMS_SQL, job_config=job_cfg).to_dataframe()
+    except (gexc.Forbidden, gexc.BadRequest, gexc.TooManyRequests):
+        st.error("BigQuery quota or credits exceeded. Please try again later.")
+        st.stop()
+    except Exception as e:
+        st.error(f"Unexpected error while loading search terms: {e}")
+        st.stop()
+
+    return df
 
 
 def pick_default_country(countries: List[str]) -> str:
@@ -95,6 +118,7 @@ st.title("Google Top Search Terms")
 
 with st.sidebar:
     st.header("Filters")
+
     countries = get_countries()
     if not countries:
         st.warning("No countries available from the dataset.")
@@ -130,13 +154,16 @@ else:
 if start_date > end_date:
     start_date, end_date = end_date, start_date
 
-st.markdown(f"Showing top 5 weekly search terms from **{start_date}** to **{end_date}**")
+st.markdown(
+    f"Showing top 5 weekly search terms from **{start_date}** to **{end_date}**"
+)
 
 # ---------------- Query + Output ----------------
 df = execute_query(selected_country, start_date, end_date)
 
 if not df.empty:
     st.subheader(f"Top 5 Weekly Search Terms in {selected_country}")
+
     fig_bar = px.bar(
         df,
         x="date",
