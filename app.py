@@ -14,6 +14,8 @@ st.set_page_config(page_title="Google Top Search Terms", layout="wide")
 credentials = service_account.Credentials.from_service_account_info(
     st.secrets["google_service_account"]
 )
+client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+
 
 # location MUST be set on the client (or passed to client.query), not in QueryJobConfig
 client = bigquery.Client(
